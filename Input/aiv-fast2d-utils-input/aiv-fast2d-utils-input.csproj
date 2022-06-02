@@ -54,9 +54,12 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="AivAxisCode.cs" />
     <Compile Include="ButtonState.cs" />
+    <Compile Include="AivKeyCode.cs" />
     <Compile Include="Input.cs" />
     <Compile Include="JoystickButton.cs" />
+    <Compile Include="JoystickHelpers.cs" />
     <Compile Include="JoystickIndex.cs" />
     <Compile Include="MouseButton.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />

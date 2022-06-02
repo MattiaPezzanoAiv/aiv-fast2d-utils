@@ -4,204 +4,228 @@ using OpenTK;
 
 namespace Aiv.Fast2D.Utils.Input
 {
-	public static class Input
-	{
-		private const int joysticks = 4;
-		private static Window window;
-		private static readonly Dictionary<KeyCode, ButtonState> keys;
-		private static readonly Dictionary<MouseButton, ButtonState> mouseButtons;
-		private static readonly Dictionary<JoystickButton, List<ButtonState>> joystickButtons;
+    public static class Input
+    {
+        private static readonly Dictionary<AivKeyCode, ButtonState> s_keys = new Dictionary<AivKeyCode, ButtonState>();
+        private static readonly Dictionary<AivAxisCode, AxisState> s_axes = new Dictionary<AivAxisCode, AxisState>();
 
-		static Input()
-		{
-			//Fill dict with Key States
-			Input.keys = new Dictionary<KeyCode, ButtonState>();
-			foreach ( var item in Enum.GetValues( typeof( KeyCode ) ) )
-			{
-				KeyCode key = (KeyCode)item;
-				Input.keys.Add( key, new ButtonState() );
-			}
+        // this is a list of callbacks listening for key state changes.
+        private static readonly Dictionary<AivKeyCode, List<Action<bool>>> s_keysListeners = new Dictionary<AivKeyCode, List<Action<bool>>>();
+        private static readonly Dictionary<AivAxisCode, List<Action<float>>> s_axesListeners = new Dictionary<AivAxisCode, List<Action<float>>>();
 
-			//Fill dict with Mouse States
-			Input.mouseButtons = new Dictionary<MouseButton, ButtonState>();
-			foreach ( var item in Enum.GetValues( typeof( MouseButton ) ) )
-			{
-				MouseButton button = (MouseButton)item;
-				Input.mouseButtons.Add( button, new ButtonState() );
-			}
+        internal const int KEYBOARD_OFFSET = 0;
+        internal const int MOUSE_OFFSET = 200;
+        internal const int JOYPAD_OFFSET = 300;
 
-			//Fill dict with Joystick States
-			Input.joystickButtons = new Dictionary<JoystickButton, List<ButtonState>>();
-			foreach ( var item in Enum.GetValues( typeof( JoystickButton ) ) )
-			{
-				JoystickButton button = (JoystickButton)item;
-				Input.joystickButtons.Add( button, new List<ButtonState>() );
-				for ( int i = 0; i < Input.joysticks; i++ )
-				{
-					Input.joystickButtons[button].Add( new ButtonState() );
-				}
-			}
-		}
+        // quick utils to not get confused
+        internal static bool IsKeyboard(AivKeyCode key) => (int)key < MOUSE_OFFSET;
+        internal static bool IsMouse(AivKeyCode key) => (int)key > MOUSE_OFFSET && (int)key < JOYPAD_OFFSET;
+        internal static bool IsJoypad(AivKeyCode key) => (int)key > JOYPAD_OFFSET;
 
-		public static void Update( Window window )
-		{
-			Input.window = window;
+        static Input()
+        {
+            // fill dict with Key States
+            s_keys.Clear();
+            foreach (var item in Enum.GetValues(typeof(AivKeyCode)))
+            {
+                AivKeyCode key = (AivKeyCode)item;
+                s_keys.Add(key, new ButtonState());
+            }
 
-			//Keyboard Update
-			foreach ( var item in Input.keys )
-			{
-				item.Value.Update( window.GetKey( item.Key ) );
-			}
+            // fill dictionary with axes states
+            s_axes.Clear();
+            foreach (var item in Enum.GetValues(typeof(AivAxisCode)))
+            {
+                AivAxisCode key = (AivAxisCode)item;
+                s_axes.Add(key, new AxisState());
+            }
+        }
 
-			//Mouse Update
-			Input.mouseButtons[MouseButton.Left].Update( window.mouseLeft );
-			Input.mouseButtons[MouseButton.Middle].Update( window.mouseMiddle );
-			Input.mouseButtons[MouseButton.Right].Update( window.mouseRight );
+        private static void RaiseStateChangedEventIfNeeded(AivKeyCode key)
+        {
+            var keyState = s_keys[key];
+            if ((keyState.Down || keyState.Up) &&
+                    s_keysListeners.TryGetValue(key, out var listeners))
+            {
+                // value has changed and we need to raise events
+                foreach (var action in listeners)
+                {
+                    action?.Invoke(keyState.Pressed); // pass in the current state of the key
+                }
+            }
+        }
 
-			Input.mouseButtons[MouseButton.Button1].Update( window.context.Mouse.GetState().IsButtonDown( OpenTK.Input.MouseButton.Button1 ) );
-			Input.mouseButtons[MouseButton.Button2].Update( window.context.Mouse.GetState().IsButtonDown( OpenTK.Input.MouseButton.Button2 ) );
-			Input.mouseButtons[MouseButton.Button3].Update( window.context.Mouse.GetState().IsButtonDown( OpenTK.Input.MouseButton.Button3 ) );
-			Input.mouseButtons[MouseButton.Button4].Update( window.context.Mouse.GetState().IsButtonDown( OpenTK.Input.MouseButton.Button4 ) );
-			Input.mouseButtons[MouseButton.Button5].Update( window.context.Mouse.GetState().IsButtonDown( OpenTK.Input.MouseButton.Button5 ) );
-			Input.mouseButtons[MouseButton.Button6].Update( window.context.Mouse.GetState().IsButtonDown( OpenTK.Input.MouseButton.Button6 ) );
-			Input.mouseButtons[MouseButton.Button7].Update( window.context.Mouse.GetState().IsButtonDown( OpenTK.Input.MouseButton.Button7 ) );
-			Input.mouseButtons[MouseButton.Button8].Update( window.context.Mouse.GetState().IsButtonDown( OpenTK.Input.MouseButton.Button8 ) );
-			Input.mouseButtons[MouseButton.Button9].Update( window.context.Mouse.GetState().IsButtonDown( OpenTK.Input.MouseButton.Button9 ) );
+        private static bool AlmostEqual(float a, float b, float tolerance = 0.0001f)
+        {
+            return Math.Abs(a - b) <= tolerance;
+        }
 
-			Input.MouseX = window.mouseX;
-			Input.MouseY = window.mouseY;
-			Input.MousePosition = window.mousePosition;
+        public static void Update(Window window)
+        {
+            // keys update
+            foreach (var keyState in s_keys)
+            {
+                var key = keyState.Key;
+                if (IsJoypad(key))
+                {
+                    // this is handled separatedly 
+                    continue;
+                }
 
-			//Joystick Update
-			for ( int i = 0; i < Input.joysticks; i++ )
-			{
-				//Buttons
-				Input.joystickButtons[JoystickButton.A][i].Update( window.JoystickA( i ) );
-				Input.joystickButtons[JoystickButton.B][i].Update( window.JoystickB( i ) );
-				Input.joystickButtons[JoystickButton.X][i].Update( window.JoystickX( i ) );
-				Input.joystickButtons[JoystickButton.Y][i].Update( window.JoystickY( i ) );
+                bool newVal = false;
+                if (IsKeyboard(key))
+                {
+                    newVal = window.GetKey((KeyCode)key); // this maps 1:1 with the window keycode enum
+                }
+                else if (IsMouse(key))
+                {
+                    int idx = ((int)key) - MOUSE_OFFSET - 1; // open tk maps the first to 0, we map it to 1 so to compansate we just remove 1;
+                    newVal = window.context.Mouse.GetState().IsButtonDown((OpenTK.Input.MouseButton)idx);
+                }
 
-				Input.joystickButtons[JoystickButton.Up][i].Update( window.JoystickUp( i ) );
-				Input.joystickButtons[JoystickButton.Down][i].Update( window.JoystickDown( i ) );
-				Input.joystickButtons[JoystickButton.Left][i].Update( window.JoystickLeft( i ) );
-				Input.joystickButtons[JoystickButton.Right][i].Update( window.JoystickRight( i ) );
+                keyState.Value.Update(newVal);
+                RaiseStateChangedEventIfNeeded(key);
+            }
 
-				Input.joystickButtons[JoystickButton.Start][i].Update( window.JoystickStart( i ) );
-				Input.joystickButtons[JoystickButton.Back][i].Update( window.JoystickBack( i ) );
-				Input.joystickButtons[JoystickButton.BigButton][i].Update( window.JoystickBigButton( i ) );
+            void UpdateJoystickButton(AivKeyCode key, bool value)
+            {
+                var keyState = s_keys[key];
+                keyState.Update(value);
+                RaiseStateChangedEventIfNeeded(key);
+            }
 
-				Input.joystickButtons[JoystickButton.ShoulderLeft][i].Update( window.JoystickShoulderLeft( i ) );
-				Input.joystickButtons[JoystickButton.ShoulderRight][i].Update( window.JoystickShoulderRight( i ) );
+            void UpdateJoystickAxis(AivAxisCode axis, float value)
+            {
+                var axisState = s_axes[axis];
+                float prevVal = axisState.Value;
+                axisState.Update(value);
+                if (!AlmostEqual(prevVal, value))
+                {
+                    // raise events
+                    if (s_axesListeners.TryGetValue(axis, out var listeners))
+                    {
+                        // value has changed and we need to raise events
+                        foreach (var action in listeners)
+                        {
+                            action?.Invoke(value);
+                        }
+                    }
+                }
+            }
 
-				Input.joystickButtons[JoystickButton.LeftStick][i].Update( window.JoystickLeftStick( i ) );
-				Input.joystickButtons[JoystickButton.RightStick][i].Update( window.JoystickRightStick( i ) );
+            // we can't use this technique with the joypads so we update them separatedly
+            const int joystickSupported = 2;
+            for (int j = 0; j < joystickSupported; j++)
+            {
+                var state = OpenTK.Input.GamePad.GetState(j);
+                UpdateJoystickButton(JoystickButtons.A(j), state.Buttons.A == OpenTK.Input.ButtonState.Pressed);
+                UpdateJoystickButton(JoystickButtons.B(j), state.Buttons.B == OpenTK.Input.ButtonState.Pressed);
+                UpdateJoystickButton(JoystickButtons.X(j), state.Buttons.X == OpenTK.Input.ButtonState.Pressed);
+                UpdateJoystickButton(JoystickButtons.Y(j), state.Buttons.Y == OpenTK.Input.ButtonState.Pressed);
+                UpdateJoystickButton(JoystickButtons.Up(j), state.DPad.IsUp);
+                UpdateJoystickButton(JoystickButtons.Down(j), state.DPad.IsDown);
+                UpdateJoystickButton(JoystickButtons.Left(j), state.DPad.IsLeft);
+                UpdateJoystickButton(JoystickButtons.Right(j), state.DPad.IsRight);
+                UpdateJoystickButton(JoystickButtons.Start(j), state.Buttons.Start == OpenTK.Input.ButtonState.Pressed);
+                UpdateJoystickButton(JoystickButtons.Back(j), state.Buttons.Back == OpenTK.Input.ButtonState.Pressed);
+                UpdateJoystickButton(JoystickButtons.BigButton(j), state.Buttons.BigButton == OpenTK.Input.ButtonState.Pressed);
+                UpdateJoystickButton(JoystickButtons.BumperLeft(j), state.Buttons.LeftShoulder == OpenTK.Input.ButtonState.Pressed);
+                UpdateJoystickButton(JoystickButtons.BumperRight(j), state.Buttons.RightShoulder == OpenTK.Input.ButtonState.Pressed);
+                UpdateJoystickButton(JoystickButtons.TriggerLeft(j), state.Triggers.Left > 0.7f); // todo should be going into a config file
+                UpdateJoystickButton(JoystickButtons.TriggerRight(j), state.Triggers.Right > 0.7f); // todo should be going into a config file
+                UpdateJoystickButton(JoystickButtons.StickLeft(j), state.Buttons.LeftStick == OpenTK.Input.ButtonState.Pressed);
+                UpdateJoystickButton(JoystickButtons.StickRight(j), state.Buttons.RightStick == OpenTK.Input.ButtonState.Pressed);
 
-				Input.Joysticks = window.Joysticks;
-			}
-		}
+                // in the same for loop we can update joystick axes too
+                UpdateJoystickAxis(JoystickAxes.LeftHorizontal(j), state.ThumbSticks.Left.X);
+                UpdateJoystickAxis(JoystickAxes.LeftVertical(j), state.ThumbSticks.Left.Y);
+                UpdateJoystickAxis(JoystickAxes.RightHorizontal(j), state.ThumbSticks.Right.X);
+                UpdateJoystickAxis(JoystickAxes.RightVertical(j), state.ThumbSticks.Right.Y);
+                UpdateJoystickAxis(JoystickAxes.LeftTrigger(j), state.Triggers.Left);
+                UpdateJoystickAxis(JoystickAxes.RightTrigger(j), state.Triggers.Right);
+            }
 
-		//Keyboard Events
-		public static bool IsKeyPressed( KeyCode key )
-		{
-			return Input.keys[key].Pressed;
-		}
+            MouseX = window.mouseX;
+            MouseY = window.mouseY;
+            MousePosition = window.mousePosition;
+        }
 
-		public static bool IsKeyUp( KeyCode key )
-		{
-			return Input.keys[key].Up;
-		}
+        // enhanced input events
+        public static bool IsPressed(AivKeyCode key)
+        {
+            if (s_keys.TryGetValue(key, out var state))
+            {
+                return state.Pressed;
+            }
+            return false;
+        }
+        public static bool WasPressed(AivKeyCode key)
+        {
+            if (s_keys.TryGetValue(key, out var state))
+            {
+                return state.Down;
+            }
+            return false;
+        }
+        public static bool WasReleased(AivKeyCode key)
+        {
+            if (s_keys.TryGetValue(key, out var state))
+            {
+                return state.Up;
+            }
+            return false;
+        }
+        public static float GetAxis(AivAxisCode axis)
+        {
+            if (s_axes.TryGetValue(axis, out var state))
+            {
+                return state.Value;
+            }
+            return 0f;
+        }
+        // end enhanced input events
 
-		public static bool IsKeyDown( KeyCode key )
-		{
-			return Input.keys[key].Down;
-		}
+        //Mouse Events
+        public static float MouseX { get; private set; }
+        public static float MouseY { get; private set; }
+        public static Vector2 MousePosition { get; private set; }
 
-		//Mouse Events
-		public static float MouseX { get; private set; }
-		public static float MouseY { get; private set; }
-		public static Vector2 MousePosition { get; private set; }
 
-		public static bool IsMouseButtonDown( MouseButton button )
-		{
-			return Input.mouseButtons[button].Down;
-		}
+        // todo add events logic
+        public static void RegisterListener(AivKeyCode key, Action<bool> callback)
+        {
+            if (!s_keysListeners.ContainsKey(key))
+            {
+                s_keysListeners.Add(key, new List<Action<bool>>());
+            }
 
-		public static bool IsMouseButtonUp( MouseButton button )
-		{
-			return Input.mouseButtons[button].Up;
-		}
+            s_keysListeners[key].Add(callback);
+        }
 
-		public static bool IsMouseButtonPressed( MouseButton button )
-		{
-			return Input.mouseButtons[button].Pressed;
-		}
+        public static void UnregisterListener(AivKeyCode key, Action<bool> callbackToRemove)
+        {
+            if (s_keysListeners.TryGetValue(key, out var listeners))
+            {
+                listeners.Remove(callbackToRemove);
+            }
+        }
 
-		//Joystick Events
-		public static string[] Joysticks { get; private set; }
+        public static void RegisterListener(AivAxisCode key, Action<float> callback)
+        {
+            if (!s_axesListeners.ContainsKey(key))
+            {
+                s_axesListeners.Add(key, new List<Action<float>>());
+            }
 
-		public static bool IsJoystickButtonDown( JoystickButton button, JoystickIndex index )
-		{
-			return Input.joystickButtons[button][(int)index].Down;
-		}
+            s_axesListeners[key].Add(callback);
+        }
 
-		public static bool IsJoystickButtonUp( JoystickButton button, JoystickIndex index )
-		{
-			return Input.joystickButtons[button][(int)index].Up;
-		}
-
-		public static bool IsJoystickButtonPressed( JoystickButton button, JoystickIndex index )
-		{
-			return Input.joystickButtons[button][(int)index].Pressed;
-		}
-
-		public static void JoystickVibrate( JoystickIndex index, float left, float right )
-		{
-			Input.window.JoystickVibrate( (int)index, left, right );
-		}
-
-		public static string JoystickDebug( JoystickIndex index )
-		{
-			return Input.window.JoystickDebug( (int)index );
-		}
-
-		public static Vector2 JoystickAxisLeft( JoystickIndex index, float threshold = 0.1f )
-		{
-			return Input.window.JoystickAxisLeft( (int)index, threshold );
-		}
-
-		public static Vector2 JoystickAxisLeftRaw( JoystickIndex index )
-		{
-			return Input.window.JoystickAxisLeftRaw( (int)index );
-		}
-
-		public static Vector2 JoystickAxisRight( JoystickIndex index, float threshold = 0.1f )
-		{
-			return Input.window.JoystickAxisRight( (int)index, threshold );
-		}
-
-		public static Vector2 JoystickAxisRightRaw( JoystickIndex index )
-		{
-			return Input.window.JoystickAxisRightRaw( (int)index );
-		}
-
-		public static float JoystickTriggerLeft( JoystickIndex index, float threshold = 0.1f )
-		{
-			return Input.window.JoystickTriggerLeft( (int)index, threshold );
-		}
-
-		public static float JoystickTriggerLeftRaw( JoystickIndex index )
-		{
-			return Input.window.JoystickTriggerLeftRaw( (int)index );
-		}
-
-		public static float JoystickTriggerRight( JoystickIndex index, float threshold = 0.1f )
-		{
-			return Input.window.JoystickTriggerRight( (int)index, threshold );
-		}
-
-		public static float JoystickTriggerRightRaw( JoystickIndex index )
-		{
-			return Input.window.JoystickTriggerRightRaw( (int)index );
-		}
-	}
+        public static void UnregisterListener(AivAxisCode key, Action<float> callbackToRemove)
+        {
+            if (s_axesListeners.TryGetValue(key, out var listeners))
+            {
+                listeners.Remove(callbackToRemove);
+            }
+        }
+    }
 }
