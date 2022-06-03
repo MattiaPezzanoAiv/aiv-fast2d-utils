@@ -54,6 +54,9 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="ActionsMapping\ActionsMappingSystem.cs" />
+    <Compile Include="ActionsMapping\InputAction.cs" />
+    <Compile Include="ActionsMapping\InputContext.cs" />
     <Compile Include="AivAxisCode.cs" />
     <Compile Include="ButtonState.cs" />
     <Compile Include="AivKeyCode.cs" />
